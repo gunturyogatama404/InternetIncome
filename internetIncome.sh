@@ -523,6 +523,26 @@ start_containers() {
     fi
   fi
 
+  # Starting PacketSDK container
+  if [[ $PACKETSDK_API ]]; then
+    echo -e "${GREEN}Starting PacketSDK container...${NOCOLOUR}"
+    if [ "$container_pulled" = false ]; then
+      sudo docker pull packetsdk/packetsdk:latest
+    fi
+    if CONTAINER_ID=$(sudo docker run -d --name packetsdk$UNIQUE_ID$i --restart=always $NETWORK_TUN $LOGS_PARAM $DNS_VOLUME -e APP_KEY=$PACKETSDK_API packetsdk/packetsdk:latest); then
+      echo "$CONTAINER_ID" | tee -a $containers_file
+      echo "packetsdk$UNIQUE_ID$i" | tee -a $container_names_file
+    else
+      echo -e "${RED}Failed to start container for PacketSDK. Exiting...${NOCOLOUR}"
+      exit 1
+    fi
+  else
+    if [[ "$container_pulled" == false && "$ENABLE_LOGS" == true ]]; then
+      echo -e "${RED}PacketSDK API key is not configured. Ignoring PacketSDK...${NOCOLOUR}"
+    fi
+  fi
+
+
   # Starting Gaganode container
   if [[ $GAGANODE_TOKEN ]]; then
     echo -e "${GREEN}Starting Gaganode container..${NOCOLOUR}"
