@@ -1,3 +1,4 @@
+
 #!/bin/bash
 
 ##################################################################################
@@ -50,10 +51,12 @@ chrome_profile_zipfile="chromeprofiledata.zip"
 restart_file="restart.sh"
 dns_resolver_file="resolv.conf"
 traffmonetizer_data_folder="traffmonetizerdata"
+network3_data_folder="network3-data"
+titan_data_folder="titan-data"
 required_files=($banner_file $properties_file $firefox_profile_zipfile $restart_file $chrome_profile_zipfile)
 files_to_be_removed=($dns_resolver_file $containers_file $container_names_file $networks_file $mysterium_file $ebesucher_file $adnade_file $adnade_containers_file $firefox_containers_file $chrome_containers_file)
 folders_to_be_removed=($adnade_data_folder $firefox_data_folder $firefox_profile_data $earnapp_data_folder $chrome_data_folder $chrome_profile_data)
-back_up_folders=($bitping_data_folder $traffmonetizer_data_folder $mysterium_data_folder)
+back_up_folders=($titan_data_folder $network3_data_folder $bitping_data_folder $traffmonetizer_data_folder $mysterium_data_folder)
 back_up_files=($earnapp_file $proxyrack_file)
 container_pulled=false
 docker_in_docker_detected=false
@@ -468,7 +471,7 @@ start_containers() {
     if [ "$container_pulled" = false ]; then
       sudo docker pull --platform=linux/amd64 trangoul/grass-desktop:latest
     fi
-    if CONTAINER_ID=$(sudo docker run -d --name grass$UNIQUE_ID$i --platform=linux/amd64 --restart=always $NETWORK_TUN $LOGS_PARAM $DNS_VOLUME -e GRASS_USERNAME=$GRASS_USERNAME -e GRASS_PASSWORD=$GRASS_PASSWORD trangoul/grass-desktop:latest); then
+    if CONTAINER_ID=$(sudo docker run -d --name grass$UNIQUE_ID$i --platform=linux/amd64 --restart=always $NETWORK_TUN $LOGS_PARAM $DNS_VOLUME -e VNC_PASSWORD=mypasswd -e GRASS_USERNAME=$GRASS_USERNAME -e GRASS_PASSWORD=$GRASS_PASSWORD trangoul/grass-desktop:latest); then
       echo "$CONTAINER_ID" | tee -a $containers_file
       echo "grass$UNIQUE_ID$i" | tee -a $container_names_file
       echo "Waiting for 60 seconds for grass container to login.."
@@ -521,6 +524,27 @@ start_containers() {
     fi
   fi
 
+  
+  # Starting PacketSDK container
+  if [[ $PACKETSDK_API ]]; then
+    echo -e "${GREEN}Starting PacketSDK container...${NOCOLOUR}"
+    if [ "$container_pulled" = false ]; then
+      sudo docker pull packetsdk/packetsdk
+    fi
+    if CONTAINER_ID=$(sudo docker run -d --name packetsdk$UNIQUE_ID$i --restart=always $NETWORK_TUN $LOGS_PARAM $DNS_VOLUME packetsdk/packetsdk -appkey=$PACKETSDK_API); then
+      echo "$CONTAINER_ID" | tee -a $containers_file
+      echo "packetsdk$UNIQUE_ID$i" | tee -a $container_names_file
+    else
+      echo -e "${RED}Failed to start container for PacketSDK. Exiting...${NOCOLOUR}"
+      exit 1
+    fi
+  else
+    if [[ "$container_pulled" == false && "$ENABLE_LOGS" == true ]]; then
+      echo -e "${RED}PacketSDK API key is not configured. Ignoring PacketSDK...${NOCOLOUR}"
+    fi
+  fi
+
+
   # Starting Gaganode container
   if [[ $GAGANODE_TOKEN ]]; then
     echo -e "${GREEN}Starting Gaganode container..${NOCOLOUR}"
@@ -543,6 +567,7 @@ start_containers() {
   # Starting Traffmonetizer container
   if [[ $TRAFFMONETIZER_TOKEN ]]; then
     echo -e "${GREEN}Starting Traffmonetizer container..${NOCOLOUR}"
+    
     if [ "$CPU_ARCH" == "aarch64" ] || [ "$CPU_ARCH" == "arm64" ]; then
       traffmonetizer_image="traffmonetizer/cli_v2:arm64v8"
     elif [ "$CPU_ARCH" == "armv7l" ]; then
@@ -550,15 +575,31 @@ start_containers() {
     else
       traffmonetizer_image="--platform=linux/amd64 traffmonetizer/cli_v2"
     fi
+  
     if [ "$container_pulled" = false ]; then
       sudo docker pull $traffmonetizer_image
     fi
+  
     mkdir -p $PWD/$traffmonetizer_data_folder/data$i
     sudo chmod -R 777 $PWD/$traffmonetizer_data_folder/data$i
     traffmonetizer_volume="-v $PWD/$traffmonetizer_data_folder/data$i:/app/traffmonetizer"
-    if CONTAINER_ID=$(sudo  docker run -d --name traffmon$UNIQUE_ID$i --restart=always $LOGS_PARAM $DNS_VOLUME $NETWORK_TUN $traffmonetizer_volume $traffmonetizer_image start accept --device-name $DEVICE_NAME$i --token $TRAFFMONETIZER_TOKEN); then
+  
+    # Limit RAM and CPU usage
+    memory_limit="128m"
+    cpu_limit="0.1"
+  
+    if CONTAINER_ID=$(sudo docker run -d \
+        --name traffmon$UNIQUE_ID$i \
+        --restart=always \
+        --memory=$memory_limit \
+        --cpus=$cpu_limit \
+        $LOGS_PARAM $DNS_VOLUME $NETWORK_TUN \
+        $traffmonetizer_volume \
+        $traffmonetizer_image start accept --device-name $DEVICE_NAME$i --token $TRAFFMONETIZER_TOKEN); then
+  
       echo "$CONTAINER_ID" | tee -a $containers_file
       echo "traffmon$UNIQUE_ID$i" | tee -a $container_names_file
+  
     else
       echo -e "${RED}Failed to start container for Traffmonetizer. Exiting..${NOCOLOUR}"
       exit 1
@@ -568,6 +609,7 @@ start_containers() {
       echo -e "${RED}Traffmonetizer Token is not configured. Ignoring Traffmonetizer..${NOCOLOUR}"
     fi
   fi
+
 
   # Starting ProxyRack container
   if [ "$PROXYRACK" = true ]; then
@@ -781,6 +823,51 @@ start_containers() {
   else
     if [[ "$container_pulled" == false && "$ENABLE_LOGS" == true ]]; then
       echo -e "${RED}Speedshare token is not configured. Ignoring Speedshare..${NOCOLOUR}"
+    fi
+  fi
+
+  # Starting Network3 container
+  if [[ $NETWORK3_EMAIL ]]; then
+    if [ "$container_pulled" = false ]; then
+      sudo docker pull aron666/network3-ai
+    fi
+    mkdir -p $PWD/$network3_data_folder/data$i
+    sudo chmod -R 777 $PWD/$network3_data_folder/data$i
+    network3_volume="-v $PWD/$network3_data_folder/data$i:/usr/local/etc/wireguard"
+    if CONTAINER_ID=$(sudo docker run -d --name network3$UNIQUE_ID$i --restart=always $NETWORK_TUN $LOGS_PARAM $DNS_VOLUME $network3_volume --cap-add NET_ADMIN --device /dev/net/tun -e EMAIL=$NETWORK3_EMAIL aron666/network3-ai); then
+      echo "$CONTAINER_ID" | tee -a $containers_file
+      echo "network3$UNIQUE_ID$i" | tee -a $container_names_file
+    else
+      echo -e "${RED}Failed to start container for Network3. Exiting..${NOCOLOUR}"
+      exit 1
+    fi
+  else
+    if [[ "$container_pulled" == false && "$ENABLE_LOGS" == true ]]; then
+      echo -e "${RED}Network3 Email is not configured. Ignoring Network3..${NOCOLOUR}"
+    fi
+  fi
+
+  # Starting Titan Network container
+  if [[ $TITAN_HASH ]]; then
+    if [ "$container_pulled" = false ]; then
+      sudo docker pull nezha123/titan-edge
+      mkdir -p $PWD/$titan_data_folder/data$i
+      sudo chmod -R 777 $PWD/$titan_data_folder/data$i
+      titan_volume="-v $PWD/$titan_data_folder/data$i:/root/.titanedge"
+      if CONTAINER_ID=$(sudo  docker run -d --name titan$UNIQUE_ID$i --restart=always $LOGS_PARAM $DNS_VOLUME $NETWORK_TUN $titan_volume nezha123/titan-edge); then
+        echo "$CONTAINER_ID" | tee -a $containers_file
+        echo "titan$UNIQUE_ID$i" | tee -a $container_names_file
+      else
+        echo -e "${RED}Failed to start container for Titan Network. Exiting..${NOCOLOUR}"
+        exit 1
+      fi
+      sleep 5
+      sudo docker run --rm -it $titan_volume nezha123/titan-edge bind --hash=$TITAN_HASH https://api-test1.container1.titannet.io/api/v2/device/binding
+      echo -e "${GREEN}The current script is designed to support only a single device for the Titan Network. Please create a new folder, download the InternetIncome script, and add the appropriate hash for the new device.${NOCOLOUR}"
+    fi
+  else
+    if [[ "$container_pulled" == false && "$ENABLE_LOGS" == true ]]; then
+      echo -e "${RED}Titan Network Hash is not configured. Ignoring Titan Network..${NOCOLOUR}"
     fi
   fi
 
